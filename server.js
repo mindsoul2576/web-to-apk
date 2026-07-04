@@ -10,7 +10,12 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 app.use(cors());
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+
+// Ensure downloads directory exists
+const DOWNLOAD_DIR = path.join(__dirname, 'downloads');
+if (!fs.existsSync(DOWNLOAD_DIR)) {
+    fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
+}
 
 // ============================================
 // HEALTH CHECK
@@ -20,13 +25,12 @@ app.get('/', (req, res) => {
     res.json({
         status: 'ok',
         message: 'Web-to-APK Generator is running!',
-        version: '2.0.0',
-        timestamp: new Date().toISOString()
+        version: '2.0.0'
     });
 });
 
 // ============================================
-// GENERATE APK - FULL VERSION
+// GENERATE APK
 // ============================================
 
 app.post('/api/generate', async (req, res) => {
@@ -42,8 +46,12 @@ app.post('/api/generate', async (req, res) => {
 
         console.log(`📱 Generating APK for: ${appName} (${url})`);
 
+        // Create filename
+        const filename = `${appName.toLowerCase().replace(/\s/g, '-')}.apk`;
+        const filepath = path.join(DOWNLOAD_DIR, filename);
+
         // ============================================
-        // METHOD 1: PWABuilder API
+        // METHOD 1: Try PWABuilder
         // ============================================
         try {
             console.log('Trying PWABuilder...');
@@ -53,46 +61,36 @@ app.post('/api/generate', async (req, res) => {
                 {
                     url: url,
                     name: appName,
-                    packageId: packageName || `com.${appName.toLowerCase().replace(/\s/g, '')}`,
-                    orientation: 'portrait',
-                    display: 'standalone',
-                    startUrl: url,
-                    backgroundColor: '#ffffff',
-                    themeColor: '#000000'
+                    packageId: packageName || `com.${appName.toLowerCase().replace(/\s/g, '')}`
                 },
                 {
-                    headers: { 
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/json'
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                     timeout: 120000
                 }
             );
 
-            // Extract download URL from various response formats
             let downloadUrl = null;
-            if (pwaResponse.data) {
-                if (pwaResponse.data.downloadUrl) {
-                    downloadUrl = pwaResponse.data.downloadUrl;
-                } else if (pwaResponse.data.url) {
-                    downloadUrl = pwaResponse.data.url;
-                } else if (pwaResponse.data.data && pwaResponse.data.data.downloadUrl) {
-                    downloadUrl = pwaResponse.data.data.downloadUrl;
-                } else if (pwaResponse.data.downloadLinks && pwaResponse.data.downloadLinks.android) {
-                    downloadUrl = pwaResponse.data.downloadLinks.android;
-                } else if (pwaResponse.data.links && pwaResponse.data.links.android) {
-                    downloadUrl = pwaResponse.data.links.android;
-                }
+            if (pwaResponse.data && pwaResponse.data.downloadUrl) {
+                downloadUrl = pwaResponse.data.downloadUrl;
             }
 
             if (downloadUrl) {
-                console.log('✅ PWABuilder success!');
+                // Download the APK file
+                console.log('Downloading APK from:', downloadUrl);
+                const apkResponse = await axios.get(downloadUrl, {
+                    responseType: 'arraybuffer',
+                    timeout: 120000
+                });
+                
+                // Save to local
+                fs.writeFileSync(filepath, apkResponse.data);
+                console.log('✅ APK saved to:', filepath);
+                
                 return res.json({
                     success: true,
                     appName: appName,
                     url: url,
-                    packageName: packageName,
-                    downloadUrl: downloadUrl,
+                    downloadUrl: `/downloads/${filename}`,
                     method: 'PWABuilder',
                     message: 'APK berjaya dihasilkan! 🎉'
                 });
@@ -102,94 +100,32 @@ app.post('/api/generate', async (req, res) => {
         }
 
         // ============================================
-        // METHOD 2: PWA2APK (AppMaker.xyz)
+        // METHOD 2: Create dummy APK (for testing)
         // ============================================
-        try {
-            console.log('Trying PWA2APK...');
-            
-            const formData = new URLSearchParams();
-            formData.append('url', url);
-            formData.append('app_name', appName);
-            formData.append('package_name', packageName || `com.${appName.toLowerCase().replace(/\s/g, '')}`);
-            formData.append('submit', 'Generate APK');
-
-            const pwa2apkResponse = await axios.post(
-                'https://appmaker.xyz/pwa-to-apk/',
-                formData.toString(),
-                {
-                    headers: {
-                        'Content-Type': 'application/x-www-form-urlencoded',
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                    },
-                    timeout: 120000,
-                    maxRedirects: 5
-                }
-            );
-
-            // Extract download URL from HTML response
-            let downloadUrl = null;
-            const html = typeof pwa2apkResponse.data === 'string' ? pwa2apkResponse.data : JSON.stringify(pwa2apkResponse.data);
-            
-            // Pattern to find APK URL
-            const patterns = [
-                /https?:\/\/[^\s"']+\.apk/i,
-                /https?:\/\/[^\s"']+download[^\s"']*/i,
-                /https?:\/\/storage\.googleapis\.com[^\s"']+\.apk/i,
-                /https?:\/\/[^\s"']+\.appmaker\.xyz[^\s"']+/i
-            ];
-
-            for (const pattern of patterns) {
-                const match = html.match(pattern);
-                if (match) {
-                    downloadUrl = match[0];
-                    break;
-                }
-            }
-
-            if (downloadUrl) {
-                console.log('✅ PWA2APK success!');
-                return res.json({
-                    success: true,
-                    appName: appName,
-                    url: url,
-                    packageName: packageName,
-                    downloadUrl: downloadUrl,
-                    method: 'PWA2APK',
-                    message: 'APK berjaya dihasilkan! 🎉'
-                });
-            }
-        } catch (pwa2apkError) {
-            console.log('PWA2APK failed:', pwa2apkError.message);
-        }
-
-        // ============================================
-        // METHOD 3: Simulate APK (Fallback for testing)
-        // ============================================
-        console.log('All methods failed. Returning simulation...');
+        console.log('Creating dummy APK for testing...');
         
-        // Create a dummy APK file (for testing)
-        const filename = `${appName.toLowerCase().replace(/\s/g, '-')}.apk`;
-        const filepath = path.join(__dirname, 'downloads', filename);
+        // Create a simple text file as APK (for testing)
+        const dummyContent = `
+            === APK FORGE - TEST APK ===
+            App Name: ${appName}
+            Website: ${url}
+            Package: ${packageName || `com.${appName.toLowerCase().replace(/\s/g, '')}`}
+            Generated: ${new Date().toISOString()}
+            ==============================
+            This is a test APK file.
+            In production, this will be a real APK.
+        `;
         
-        // Ensure downloads directory exists
-        const dir = path.join(__dirname, 'downloads');
-        if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
-        }
-        
-        // Create a dummy APK file
-        const dummyContent = `Dummy APK file for testing\nApp: ${appName}\nURL: ${url}\nGenerated: ${new Date().toISOString()}`;
         fs.writeFileSync(filepath, dummyContent);
-        
-        const downloadUrl = `${req.protocol}://${req.get('host')}/downloads/${filename}`;
-        
+        console.log('✅ Dummy APK saved to:', filepath);
+
         return res.json({
             success: true,
             appName: appName,
             url: url,
             packageName: packageName,
-            downloadUrl: downloadUrl,
-            method: 'Simulation (Fallback)',
+            downloadUrl: `/downloads/${filename}`,
+            method: 'Test Mode (Dummy APK)',
             message: 'APK berjaya dihasilkan! 🎉 (Test mode)'
         });
 
@@ -197,40 +133,24 @@ app.post('/api/generate', async (req, res) => {
         console.error('Error:', error.message);
         res.status(500).json({
             success: false,
-            error: 'Gagal generate APK: ' + error.message,
-            debug: error.stack
+            error: 'Gagal generate APK: ' + error.message
         });
     }
 });
 
 // ============================================
-// SERVE STATIC FILES (for downloads)
+// SERVE DOWNLOADS
 // ============================================
 
-app.use('/downloads', express.static(path.join(__dirname, 'downloads')));
+app.use('/downloads', express.static(DOWNLOAD_DIR));
 
-// ============================================
-// STATUS CHECK
-// ============================================
-
-app.get('/api/status/:jobId', (req, res) => {
-    res.json({
-        jobId: req.params.jobId,
-        status: 'completed',
-        progress: 100
-    });
-});
-
-// ============================================
-// 404 HANDLER
-// ============================================
-
-app.use((req, res) => {
-    res.status(404).json({
-        success: false,
-        error: 'Endpoint not found',
-        available: ['GET /', 'POST /api/generate', 'GET /api/status/:jobId']
-    });
+app.get('/downloads/:filename', (req, res) => {
+    const filepath = path.join(DOWNLOAD_DIR, req.params.filename);
+    if (fs.existsSync(filepath)) {
+        res.download(filepath);
+    } else {
+        res.status(404).json({ error: 'File not found' });
+    }
 });
 
 // ============================================
@@ -239,14 +159,5 @@ app.use((req, res) => {
 
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`🌐 Health check: http://localhost:${PORT}/`);
-});
-
-// Handle errors
-process.on('uncaughtException', (err) => {
-    console.error('Uncaught Exception:', err);
-});
-
-process.on('unhandledRejection', (err) => {
-    console.error('Unhandled Rejection:', err);
+    console.log(`📁 Downloads directory: ${DOWNLOAD_DIR}`);
 });
