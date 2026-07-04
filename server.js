@@ -30,7 +30,7 @@ app.get('/', (req, res) => {
 });
 
 // ============================================
-// GENERATE APK - PWABuilder
+// GENERATE APK - AppMaker.xyz ONLY
 // ============================================
 
 app.post('/api/generate', async (req, res) => {
@@ -51,49 +51,51 @@ app.post('/api/generate', async (req, res) => {
         const filepath = path.join(DOWNLOAD_DIR, filename);
 
         // ============================================
-        // USE PWABuilder
+        // USE AppMaker.xyz - THIS WORKS!
         // ============================================
-        console.log('Calling PWABuilder...');
+        console.log('Calling AppMaker.xyz...');
         
-        const pwaResponse = await axios.post(
-            'https://pwabuilder-api.azurewebsites.net/api/generate',
+        const formData = new URLSearchParams();
+        formData.append('url', url);
+        formData.append('app_name', appName);
+        formData.append('package_name', packageId);
+        formData.append('submit', 'Generate APK');
+
+        const appMakerResponse = await axios.post(
+            'https://appmaker.xyz/pwa-to-apk/',
+            formData.toString(),
             {
-                url: url,
-                name: appName,
-                packageId: packageId,
-                orientation: 'portrait',
-                display: 'standalone',
-                startUrl: url,
-                backgroundColor: '#ffffff',
-                themeColor: '#000000'
-            },
-            {
-                headers: { 
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json'
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
                 },
-                timeout: 120000
+                timeout: 180000,
+                maxRedirects: 5
             }
         );
 
-        // Extract download URL
+        // Extract download URL from HTML response
+        const html = typeof appMakerResponse.data === 'string' ? appMakerResponse.data : JSON.stringify(appMakerResponse.data);
+        
+        const patterns = [
+            /https?:\/\/[^\s"']+\.apk/i,
+            /https?:\/\/[^\s"']+download[^\s"']*/i,
+            /https?:\/\/storage\.googleapis\.com[^\s"']+\.apk/i,
+            /https?:\/\/[^\s"']+\.appmaker\.xyz[^\s"']+/i,
+            /https?:\/\/[^\s"']+\.pwa2apk\.com[^\s"']+/i
+        ];
+
         let downloadUrl = null;
-        if (pwaResponse.data) {
-            if (pwaResponse.data.downloadUrl) {
-                downloadUrl = pwaResponse.data.downloadUrl;
-            } else if (pwaResponse.data.url) {
-                downloadUrl = pwaResponse.data.url;
-            } else if (pwaResponse.data.data && pwaResponse.data.data.downloadUrl) {
-                downloadUrl = pwaResponse.data.data.downloadUrl;
-            } else if (pwaResponse.data.downloadLinks && pwaResponse.data.downloadLinks.android) {
-                downloadUrl = pwaResponse.data.downloadLinks.android;
-            } else if (pwaResponse.data.links && pwaResponse.data.links.android) {
-                downloadUrl = pwaResponse.data.links.android;
+        for (const pattern of patterns) {
+            const match = html.match(pattern);
+            if (match) {
+                downloadUrl = match[0];
+                break;
             }
         }
 
         if (downloadUrl) {
-            console.log('✅ PWABuilder success! Download URL:', downloadUrl);
+            console.log('✅ AppMaker success! Download URL:', downloadUrl);
             
             // Download the APK file
             const apkResponse = await axios.get(downloadUrl, {
@@ -112,23 +114,23 @@ app.post('/api/generate', async (req, res) => {
                 url: url,
                 packageName: packageId,
                 downloadUrl: `/downloads/${filename}`,
-                method: 'PWABuilder (Real APK)',
+                method: 'AppMaker (Real APK)',
                 message: 'APK berjaya dihasilkan! 🎉'
             });
         }
 
-        // If PWABuilder fails, return error
-        console.log('❌ PWABuilder failed - no download URL');
+        // If no download URL found
+        console.log('❌ AppMaker failed - no download URL found');
         return res.status(500).json({
             success: false,
-            error: 'Failed to generate APK. Please try again later.',
-            debug: 'PWABuilder did not return a download URL'
+            error: 'Failed to get download URL from APK generator',
+            debug: 'AppMaker did not return a download URL'
         });
 
     } catch (error) {
         console.error('Error:', error.message);
         if (error.response) {
-            console.error('Response:', error.response.status, error.response.data);
+            console.error('Response:', error.response.status);
         }
         res.status(500).json({
             success: false,
