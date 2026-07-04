@@ -41,12 +41,119 @@ app.post('/api/generate', async (req, res) => {
         const filepath = path.join(DOWNLOAD_DIR, filename);
 
         // ============================================
-        // METHOD 1: PWABuilder (with IP)
+        // USE PWA2APK (Different Endpoint)
+        // ============================================
+        try {
+            console.log('Trying PWA2APK (alternative)...');
+            
+            const response = await axios.post(
+                'https://pwa2apk.com/generate',
+                {
+                    url: url,
+                    name: appName,
+                    package: packageId
+                },
+                {
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                    },
+                    timeout: 180000
+                }
+            );
+
+            let downloadUrl = null;
+            if (response.data) {
+                if (response.data.downloadUrl) downloadUrl = response.data.downloadUrl;
+                else if (response.data.url) downloadUrl = response.data.url;
+                else if (response.data.data && response.data.data.downloadUrl) downloadUrl = response.data.data.downloadUrl;
+            }
+
+            if (downloadUrl) {
+                console.log('✅ PWA2APK success!');
+                const apkResponse = await axios.get(downloadUrl, {
+                    responseType: 'arraybuffer',
+                    timeout: 120000
+                });
+                
+                // Check if real APK
+                if (apkResponse.data[0] === 0x50 && apkResponse.data[1] === 0x4B) {
+                    fs.writeFileSync(filepath, apkResponse.data);
+                    console.log('✅ Real APK saved, size:', (apkResponse.data.length / 1024 / 1024).toFixed(2), 'MB');
+                    
+                    return res.json({
+                        success: true,
+                        appName: appName,
+                        url: url,
+                        packageName: packageId,
+                        downloadUrl: `/downloads/${filename}`,
+                        method: 'PWA2APK (Real APK)',
+                        message: 'APK berjaya dihasilkan! 🎉'
+                    });
+                }
+            }
+        } catch (pwaError) {
+            console.log('PWA2APK failed:', pwaError.message);
+        }
+
+        // ============================================
+        // USE Bubblewrap (Google's TWA Tool)
+        // ============================================
+        try {
+            console.log('Trying Bubblewrap...');
+            
+            const response = await axios.post(
+                'https://bubblewrap-api.vercel.app/api/generate',
+                {
+                    url: url,
+                    name: appName,
+                    packageId: packageId
+                },
+                {
+                    headers: { 'Content-Type': 'application/json' },
+                    timeout: 180000
+                }
+            );
+
+            let downloadUrl = null;
+            if (response.data) {
+                if (response.data.downloadUrl) downloadUrl = response.data.downloadUrl;
+                else if (response.data.url) downloadUrl = response.data.url;
+            }
+
+            if (downloadUrl) {
+                console.log('✅ Bubblewrap success!');
+                const apkResponse = await axios.get(downloadUrl, {
+                    responseType: 'arraybuffer',
+                    timeout: 120000
+                });
+                
+                if (apkResponse.data[0] === 0x50 && apkResponse.data[1] === 0x4B) {
+                    fs.writeFileSync(filepath, apkResponse.data);
+                    console.log('✅ Real APK saved, size:', (apkResponse.data.length / 1024 / 1024).toFixed(2), 'MB');
+                    
+                    return res.json({
+                        success: true,
+                        appName: appName,
+                        url: url,
+                        packageName: packageId,
+                        downloadUrl: `/downloads/${filename}`,
+                        method: 'Bubblewrap (Real APK)',
+                        message: 'APK berjaya dihasilkan! 🎉'
+                    });
+                }
+            }
+        } catch (bubbleError) {
+            console.log('Bubblewrap failed:', bubbleError.message);
+        }
+
+        // ============================================
+        // USE PWABuilder with DNS workaround
         // ============================================
         try {
             console.log('Trying PWABuilder...');
             
-            const pwaResponse = await axios.post(
+            const response = await axios.post(
                 'https://pwabuilder-api.azurewebsites.net/api/generate',
                 {
                     url: url,
@@ -60,10 +167,9 @@ app.post('/api/generate', async (req, res) => {
             );
 
             let downloadUrl = null;
-            if (pwaResponse.data) {
-                if (pwaResponse.data.downloadUrl) downloadUrl = pwaResponse.data.downloadUrl;
-                else if (pwaResponse.data.url) downloadUrl = pwaResponse.data.url;
-                else if (pwaResponse.data.data && pwaResponse.data.data.downloadUrl) downloadUrl = pwaResponse.data.data.downloadUrl;
+            if (response.data) {
+                if (response.data.downloadUrl) downloadUrl = response.data.downloadUrl;
+                else if (response.data.url) downloadUrl = response.data.url;
             }
 
             if (downloadUrl) {
@@ -72,148 +178,33 @@ app.post('/api/generate', async (req, res) => {
                     responseType: 'arraybuffer',
                     timeout: 120000
                 });
-                fs.writeFileSync(filepath, apkResponse.data);
-                console.log('✅ APK saved, size:', (apkResponse.data.length / 1024 / 1024).toFixed(2), 'MB');
                 
-                return res.json({
-                    success: true,
-                    appName: appName,
-                    url: url,
-                    packageName: packageId,
-                    downloadUrl: `/downloads/${filename}`,
-                    method: 'PWABuilder (Real APK)',
-                    message: 'APK berjaya dihasilkan! 🎉'
-                });
+                if (apkResponse.data[0] === 0x50 && apkResponse.data[1] === 0x4B) {
+                    fs.writeFileSync(filepath, apkResponse.data);
+                    console.log('✅ Real APK saved, size:', (apkResponse.data.length / 1024 / 1024).toFixed(2), 'MB');
+                    
+                    return res.json({
+                        success: true,
+                        appName: appName,
+                        url: url,
+                        packageName: packageId,
+                        downloadUrl: `/downloads/${filename}`,
+                        method: 'PWABuilder (Real APK)',
+                        message: 'APK berjaya dihasilkan! 🎉'
+                    });
+                }
             }
         } catch (pwaError) {
             console.log('PWABuilder failed:', pwaError.message);
         }
 
         // ============================================
-        // METHOD 2: PWA2APK (Alternative)
+        // ALL FAILED - Return error
         // ============================================
-        try {
-            console.log('Trying PWA2APK...');
-            
-            const formData = new URLSearchParams();
-            formData.append('url', url);
-            formData.append('app_name', appName);
-            formData.append('package_name', packageId);
-
-            const pwa2apkResponse = await axios.post(
-                'https://pwa2apk.com/api/generate',
-                formData.toString(),
-                {
-                    headers: { 
-                        'Content-Type': 'application/x-www-form-urlencoded',
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                    },
-                    timeout: 180000
-                }
-            );
-
-            let downloadUrl = null;
-            if (pwa2apkResponse.data) {
-                if (pwa2apkResponse.data.downloadUrl) downloadUrl = pwa2apkResponse.data.downloadUrl;
-                else if (pwa2apkResponse.data.url) downloadUrl = pwa2apkResponse.data.url;
-            }
-
-            if (downloadUrl) {
-                console.log('✅ PWA2APK success!');
-                const apkResponse = await axios.get(downloadUrl, {
-                    responseType: 'arraybuffer',
-                    timeout: 120000
-                });
-                fs.writeFileSync(filepath, apkResponse.data);
-                console.log('✅ APK saved, size:', (apkResponse.data.length / 1024 / 1024).toFixed(2), 'MB');
-                
-                return res.json({
-                    success: true,
-                    appName: appName,
-                    url: url,
-                    packageName: packageId,
-                    downloadUrl: `/downloads/${filename}`,
-                    method: 'PWA2APK (Real APK)',
-                    message: 'APK berjaya dihasilkan! 🎉'
-                });
-            }
-        } catch (pwa2apkError) {
-            console.log('PWA2APK failed:', pwa2apkError.message);
-        }
-
-        // ============================================
-        // METHOD 3: Bubblewrap (via API)
-        // ============================================
-        try {
-            console.log('Trying Bubblewrap...');
-            
-            const bubblewrapResponse = await axios.post(
-                'https://bubblewrap-api.vercel.app/api/generate',
-                {
-                    url: url,
-                    name: appName,
-                    packageId: packageId
-                },
-                {
-                    headers: { 'Content-Type': 'application/json' },
-                    timeout: 120000
-                }
-            );
-
-            let downloadUrl = null;
-            if (bubblewrapResponse.data) {
-                if (bubblewrapResponse.data.downloadUrl) downloadUrl = bubblewrapResponse.data.downloadUrl;
-                else if (bubblewrapResponse.data.url) downloadUrl = bubblewrapResponse.data.url;
-            }
-
-            if (downloadUrl) {
-                console.log('✅ Bubblewrap success!');
-                const apkResponse = await axios.get(downloadUrl, {
-                    responseType: 'arraybuffer',
-                    timeout: 120000
-                });
-                fs.writeFileSync(filepath, apkResponse.data);
-                console.log('✅ APK saved, size:', (apkResponse.data.length / 1024 / 1024).toFixed(2), 'MB');
-                
-                return res.json({
-                    success: true,
-                    appName: appName,
-                    url: url,
-                    packageName: packageId,
-                    downloadUrl: `/downloads/${filename}`,
-                    method: 'Bubblewrap (Real APK)',
-                    message: 'APK berjaya dihasilkan! 🎉'
-                });
-            }
-        } catch (bubblewrapError) {
-            console.log('Bubblewrap failed:', bubblewrapError.message);
-        }
-
-        // ============================================
-        // ALL FAILED - Create dummy for testing
-        // ============================================
-        console.log('❌ All methods failed. Creating dummy APK...');
-        
-        const dummyContent = `
-            === APK FORGE - TEST APK ===
-            App: ${appName}
-            URL: ${url}
-            Package: ${packageId}
-            Generated: ${new Date().toISOString()}
-            ==============================
-            This is a test APK file.
-            Please try again with a PWA-compatible website.
-        `;
-        fs.writeFileSync(filepath, dummyContent);
-        
-        return res.json({
-            success: true,
-            appName: appName,
-            url: url,
-            packageName: packageId,
-            downloadUrl: `/downloads/${filename}`,
-            method: 'Test Mode (Dummy APK)',
-            message: 'APK berjaya dihasilkan! (Test mode)'
+        console.log('❌ All methods failed');
+        return res.status(500).json({
+            success: false,
+            error: 'Failed to generate APK. Please try again later.'
         });
 
     } catch (error) {
